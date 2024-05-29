@@ -1,0 +1,10 @@
+diffusers==0.21.0
+gradio==4.31.5
+insightface==0.7.3
+numpy==1.24.0
+opencv_python_headless==4.8.0.76
+Pillow==10.3.0
+spaces==0.28.3
+torch==1.13.1
+torchvision==0.14.1
+transformers==4.31.0
