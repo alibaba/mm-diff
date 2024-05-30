@@ -59,7 +59,7 @@ pipeline = MMDiffStableDiffusionXLPipeline.from_pretrained(
     local_files_only=True,
 ).to(device)
 
-pipeline.load_from_checkpoint(image_encoder_path, mmdiff_ckpt, device)
+pipeline.load_from_checkpoint(image_encoder_path, mmdiff_ckpt, device, fuse_lora=True)
 
 
 @spaces.GPU(enable_queue=True)

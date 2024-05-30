@@ -12,11 +12,13 @@ class LoRASelfAttnProcessor(nn.Module):
         rank=4,
         network_alpha=None,
         lora_scale=1.0,
+        fuse_lora=False,
     ):
         super().__init__()
 
         self.rank = rank
         self.lora_scale = lora_scale
+        self.fuse_lora = fuse_lora
         
         self.to_q_lora = LoRALinearLayer(hidden_size, hidden_size, rank, network_alpha)
         self.to_k_lora = LoRALinearLayer(cross_attention_dim or hidden_size, hidden_size, rank, network_alpha)
@@ -50,15 +52,22 @@ class LoRASelfAttnProcessor(nn.Module):
         if attn.group_norm is not None:
             hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
 
-        query = attn.to_q(hidden_states) + self.lora_scale * self.to_q_lora(hidden_states)
+        if self.fuse_lora:
+            query = attn.to_q(hidden_states)
+        else:
+            query = attn.to_q(hidden_states) + self.lora_scale * self.to_q_lora(hidden_states)
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
         elif attn.norm_cross:
             encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
 
-        key = attn.to_k(encoder_hidden_states) + self.lora_scale * self.to_k_lora(encoder_hidden_states)
-        value = attn.to_v(encoder_hidden_states) + self.lora_scale * self.to_v_lora(encoder_hidden_states)
+        if self.fuse_lora:
+            key = attn.to_k(encoder_hidden_states)
+            value = attn.to_v(encoder_hidden_states)
+        else:
+            key = attn.to_k(encoder_hidden_states) + self.lora_scale * self.to_k_lora(encoder_hidden_states)
+            value = attn.to_v(encoder_hidden_states) + self.lora_scale * self.to_v_lora(encoder_hidden_states)
 
         query = attn.head_to_batch_dim(query)
         key = attn.head_to_batch_dim(key)
@@ -69,7 +78,10 @@ class LoRASelfAttnProcessor(nn.Module):
         hidden_states = attn.batch_to_head_dim(hidden_states)
 
         # linear proj
-        hidden_states = attn.to_out[0](hidden_states) + self.lora_scale * self.to_out_lora(hidden_states)
+        if self.fuse_lora:
+            hidden_states = attn.to_out[0](hidden_states)
+        else:
+            hidden_states = attn.to_out[0](hidden_states) + self.lora_scale * self.to_out_lora(hidden_states)
         # dropout
         hidden_states = attn.to_out[1](hidden_states)
 
@@ -94,6 +106,7 @@ class LoRACrossAttnProcessor(nn.Module):
         lora_scale=1.0,
         fuse_scale=1.0,
         num_image_tokens=4,
+        fuse_lora=False,
     ):
         super().__init__()
 
@@ -103,6 +116,7 @@ class LoRACrossAttnProcessor(nn.Module):
         self.lora_scale = lora_scale
         self.fuse_scale = fuse_scale
         self.num_image_tokens = num_image_tokens
+        self.fuse_lora = fuse_lora
         
         self.to_q_lora = LoRALinearLayer(hidden_size, hidden_size, rank, network_alpha)
         self.to_k_lora = LoRALinearLayer(cross_attention_dim or hidden_size, hidden_size, rank, network_alpha)
@@ -145,13 +159,20 @@ class LoRACrossAttnProcessor(nn.Module):
         if attn.group_norm is not None:
             hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
 
-        query = attn.to_q(hidden_states) + self.lora_scale * self.to_q_lora(hidden_states)
+        if self.fuse_lora:
+            query = attn.to_q(hidden_states)
+        else:
+            query = attn.to_q(hidden_states) + self.lora_scale * self.to_q_lora(hidden_states)
 
         if attn.norm_cross:
             encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
 
-        key = attn.to_k(encoder_hidden_states) + self.lora_scale * self.to_k_lora(encoder_hidden_states)
-        value = attn.to_v(encoder_hidden_states) + self.lora_scale * self.to_v_lora(encoder_hidden_states)
+        if self.fuse_lora:
+            key = attn.to_k(encoder_hidden_states)
+            value = attn.to_v(encoder_hidden_states)
+        else:
+            key = attn.to_k(encoder_hidden_states) + self.lora_scale * self.to_k_lora(encoder_hidden_states)
+            value = attn.to_v(encoder_hidden_states) + self.lora_scale * self.to_v_lora(encoder_hidden_states)
 
         query = attn.head_to_batch_dim(query)
         key = attn.head_to_batch_dim(key)
@@ -166,8 +187,12 @@ class LoRACrossAttnProcessor(nn.Module):
         hidden_states = attn.batch_to_head_dim(hidden_states)
 
         # for image embeddings
-        image_key = attn.to_k(image_hidden_states) + self.lora_scale * self.to_k_lora_image(image_hidden_states)
-        image_value = attn.to_v(image_hidden_states) + self.lora_scale * self.to_v_lora_image(image_hidden_states)
+        if self.fuse_lora:
+            image_key = attn.to_k_image(image_hidden_states)
+            image_value = attn.to_v_image(image_hidden_states)
+        else:
+            image_key = attn.to_k(image_hidden_states) + self.lora_scale * self.to_k_lora_image(image_hidden_states)
+            image_value = attn.to_v(image_hidden_states) + self.lora_scale * self.to_v_lora_image(image_hidden_states)
 
         image_key = attn.head_to_batch_dim(image_key)
         image_value = attn.head_to_batch_dim(image_value)
@@ -179,7 +204,7 @@ class LoRACrossAttnProcessor(nn.Module):
             image_token_idx_mask = image_token_idx_mask.repeat(1, max_obj_num)
 
         image_attn_mask = image_token_idx_mask.reshape(bsz, 1, max_obj_num, 1).repeat(1, attn.heads, 1, self.num_image_tokens)
-        image_attn_mask = (~image_attn_mask.reshape(bsz*attn.heads, 1, max_obj_num*self.num_image_tokens)).float()
+        image_attn_mask = (~image_attn_mask.reshape(bsz * attn.heads, 1, max_obj_num * self.num_image_tokens)).float()
         invalid_mask = torch.all(image_attn_mask == 1, dim=-1).unsqueeze(-1)
         image_attn_mask = image_attn_mask.masked_fill(image_attn_mask == 1, -1e6)
         image_attn_mask = image_attn_mask.masked_fill(invalid_mask.float() == 1, 0).to(dtype=query.dtype)
@@ -195,7 +220,10 @@ class LoRACrossAttnProcessor(nn.Module):
         hidden_states = hidden_states + fuse_scale * image_hidden_states
 
         # linear proj
-        hidden_states = attn.to_out[0](hidden_states) + self.lora_scale * self.to_out_lora(hidden_states)
+        if self.fuse_lora:
+            hidden_states = attn.to_out[0](hidden_states)
+        else:
+            hidden_states = attn.to_out[0](hidden_states) + self.lora_scale * self.to_out_lora(hidden_states)
         # dropout
         hidden_states = attn.to_out[1](hidden_states)
 

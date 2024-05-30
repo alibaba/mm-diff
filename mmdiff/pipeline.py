@@ -28,6 +28,7 @@ class MMDiffStableDiffusionXLPipeline(StableDiffusionXLPipeline):
         image_encoder_path,
         mmdiff_ckpt,
         device="cuda",
+        fuse_lora=False,
     ):
         self.image_encoder = CLIPImageEncoder.from_pretrained(image_encoder_path, local_files_only=True).to(device=device, dtype=torch.float16)
 
@@ -81,7 +82,8 @@ class MMDiffStableDiffusionXLPipeline(StableDiffusionXLPipeline):
                 attn_procs[name] = LoRASelfAttnProcessor(
                     hidden_size=hidden_size,
                     cross_attention_dim=cross_attention_dim,
-                    rank=64
+                    rank=64,
+                    fuse_lora=fuse_lora,
                 ).to(device, dtype=torch.float16)
             else:
                 attn_procs[name] = LoRACrossAttnProcessor(
@@ -90,6 +92,7 @@ class MMDiffStableDiffusionXLPipeline(StableDiffusionXLPipeline):
                     rank=64,
                     fuse_scale=1.0,
                     num_image_tokens=4,
+                    fuse_lora=fuse_lora,
                 ).to(device, dtype=torch.float16)
         self.unet.set_attn_processor(attn_procs)
         unet_adapter_modules = torch.nn.ModuleList(self.unet.attn_processors.values())
@@ -122,8 +125,11 @@ class MMDiffStableDiffusionXLPipeline(StableDiffusionXLPipeline):
         self.mm_fuse_two.load_state_dict(custom_state_dict["mm_fuse_two"], strict=True)
 
         print(f"-- Load custom weights from {os.path.join(mmdiff_ckpt, custom_ckpt_name)}")
+
+        if fuse_lora:
+            self.custom_fuse_lora()
     
-    def custom_fuse_lora(self, fuse_text_encoder=True, fuse_unet=True, lora_scale=1.0, device="cuda"):
+    def custom_fuse_lora(self, fuse_text_encoder=True, fuse_unet=True, lora_scale=1.0):
         def fuse_text_encoder_lora(text_encoder):
             for _, attn_module in text_encoder_attn_modules(text_encoder):
                 if isinstance(attn_module.q_proj, PatchedLoraProjection):
@@ -143,19 +149,30 @@ class MMDiffStableDiffusionXLPipeline(StableDiffusionXLPipeline):
             if hasattr(self, "text_encoder_2"):
                 fuse_text_encoder_lora(self.text_encoder_2)
 
-        # if fuse_unet:
-            # import pdb; pdb.set_trace()
-            # state_dict_fused = {}
-            # state_dict_orig = self.unet.state_dict()
-            # for name, param in state_dict_orig.items():
-            #     for _type in ["q", "k", "v", "out"]:
-            #         if f"attn1.to_{_type}.weight" in name:
-            #             w_orig = param.data.float()
-            #             w_up = state_dict_orig[name.rsplit(".", 2)[0] + f".processor.to_{_type}_lora.up.weight"].data.float()
-            #             w_down = state_dict_orig[name.rsplit(".", 2)[0] + f".processor.to_{_type}_lora.down.weight"].data.float()
-            #             w_fused = w_orig + (lora_scale * torch.bmm(w_up[None, :], w_down[None, :])[0])
-            #             param.data = w_fused.to(dtype=torch.float16)
-            #             break
+        if fuse_unet:
+            for attn_processor_name, attn_processor in self.unet.attn_processors.items():
+                attn_module = self.unet
+                for n in attn_processor_name.split(".")[:-1]:
+                    attn_module = getattr(attn_module, n)
+
+                if "attn1.processor" in attn_processor_name:
+                    attn_module.to_q.set_lora_layer(attn_module.processor.to_q_lora)
+                    attn_module.to_k.set_lora_layer(attn_module.processor.to_k_lora)
+                    attn_module.to_v.set_lora_layer(attn_module.processor.to_v_lora)
+                    attn_module.to_out[0].set_lora_layer(attn_module.processor.to_out_lora)
+                elif "attn2.processor" in attn_processor_name:
+                    attn_module.to_k_image = copy.deepcopy(attn_module.to_k)
+                    attn_module.to_v_image = copy.deepcopy(attn_module.to_v)
+
+                    attn_module.to_q.set_lora_layer(attn_module.processor.to_q_lora)
+                    attn_module.to_k.set_lora_layer(attn_module.processor.to_k_lora)
+                    attn_module.to_v.set_lora_layer(attn_module.processor.to_v_lora)
+                    attn_module.to_out[0].set_lora_layer(attn_module.processor.to_out_lora)
+
+                    attn_module.to_k_image.set_lora_layer(attn_module.processor.to_k_lora_image)
+                    attn_module.to_v_image.set_lora_layer(attn_module.processor.to_v_lora_image)
+
+            self.unet.fuse_lora(lora_scale)
 
     @torch.no_grad()
     def __call__(

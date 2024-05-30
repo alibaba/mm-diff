@@ -3,7 +3,7 @@
 
 [Zhichao Wei](), [Qingkun Su](), [Long Qin](), [Weizhi Wang]()
 
-<a href='https://arxiv.org/pdf/2403.15059'><img src='https://img.shields.io/badge/ArXiv-2311.12886-red'></a> 
+<a href='https://arxiv.org/pdf/2403.15059'><img src='https://img.shields.io/badge/ArXiv-2403.15059-red'></a> 
 <a href='https://mm-diff.github.io/'><img src='https://img.shields.io/badge/Project-Page-Blue'></a>  ![views](https://visitor-badge.laobi.icu/badge?page_id=alibaba.mm-diff&left_color=gray&right_color=red)
 </div>
 
@@ -30,7 +30,7 @@ pip install -r requirements.txt
 
 ### Download Models
 
-We provide the pretrained [checkpoints](). One can download and put them in the root path of the current project. To run the demo, you should also download the following models:
+We provide the pretrained [checkpoints](https://cloudbook-public-daily.oss-cn-hangzhou.aliyuncs.com/Personalization/checkpoints/checkpoints.tar.gz). One can download and put them in the root path of the current project. To run the demo, you should also download the following models:
 - [stabilityai/stable-diffusion-xl-base-1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0)
 - [madebyollin/sdxl-vae-fp16-fix](https://huggingface.co/madebyollin/sdxl-vae-fp16-fix)
 - [openai/clip-vit-large-patch14](https://huggingface.co/openai/clip-vit-large-patch14)
@@ -59,7 +59,8 @@ python mmdiff_gradio_demo.py
 ```
 
 ## 🚩 **Updates**
-- [2024/05/29] We release data annotation code & inference code & gradio demo for portrait generation.
+- [2024/05/30] Fuse lora weights into orignal weights to improve inference speed.
+- [2024/05/29] Release an enhanced version of MM-Diff for portrait generation, employing face embeddings to improve subject fidelity.
 
 ## **Citation**
 
